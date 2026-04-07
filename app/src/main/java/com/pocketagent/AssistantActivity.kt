@@ -28,7 +28,9 @@ import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.lifecycleScope
 import com.pocketagent.service.InferenceService
+import com.pocketagent.service.ModelManager
 import com.pocketagent.service.PipelineResult
+import com.pocketagent.ui.DownloadScreen
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -39,10 +41,12 @@ class AssistantActivity : ComponentActivity() {
     private val recorder = AudioRecorder()
     private var service: InferenceService? = null
     private var bound = false
+    private lateinit var modelManager: ModelManager
 
     private var _state = mutableStateOf<AssistantState>(AssistantState.Idle)
     private var _transcript = mutableStateOf("")
     private var _response = mutableStateOf("")
+    private var _modelsReady = mutableStateOf(false)
 
     private val connection = object : ServiceConnection {
         override fun onServiceConnected(name: ComponentName?, binder: IBinder?) {
@@ -75,22 +79,38 @@ class AssistantActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
-        // Start and bind to inference service
+        modelManager = ModelManager(this)
+        _modelsReady.value = modelManager.allModelsReady()
+
+        setContent {
+            if (_modelsReady.value) {
+                AssistantScreen(
+                    state = _state.value,
+                    transcript = _transcript.value,
+                    response = _response.value,
+                    onMicTap = { requestMicAndStart() },
+                    onDismiss = { finish() }
+                )
+            } else {
+                DownloadScreen(
+                    modelManager = modelManager,
+                    onAllReady = {
+                        _modelsReady.value = true
+                        startServiceAndListen()
+                    }
+                )
+            }
+        }
+
+        if (_modelsReady.value) {
+            startServiceAndListen()
+        }
+    }
+
+    private fun startServiceAndListen() {
         val serviceIntent = Intent(this, InferenceService::class.java)
         startForegroundService(serviceIntent)
         bindService(serviceIntent, connection, Context.BIND_AUTO_CREATE)
-
-        setContent {
-            AssistantScreen(
-                state = _state.value,
-                transcript = _transcript.value,
-                response = _response.value,
-                onMicTap = { requestMicAndStart() },
-                onDismiss = { finish() }
-            )
-        }
-
-        // Always auto-start listening
         requestMicAndStart()
     }
 
