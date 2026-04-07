@@ -8,11 +8,14 @@ set(CMAKE_CXX_STANDARD 17)
 # Point to whisper.cpp submodule
 set(WHISPER_SRC ${CMAKE_CURRENT_LIST_DIR}/../../../../third_party/whisper.cpp)
 
-# Build whisper as static lib with hidden symbols (avoids ggml collision with llama.cpp)
-set(BUILD_SHARED_LIBS OFF)
-set(WHISPER_BUILD_EXAMPLES OFF)
-set(WHISPER_BUILD_TESTS OFF)
-add_subdirectory(${WHISPER_SRC} build-whisper)
+# Force static linking — prevents ggml .so collision with llama.cpp module
+set(BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
+set(GGML_BACKEND_DL OFF CACHE BOOL "" FORCE)
+set(GGML_NATIVE OFF CACHE BOOL "" FORCE)
+set(GGML_LLAMAFILE OFF CACHE BOOL "" FORCE)
+set(WHISPER_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
+set(WHISPER_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+add_subdirectory(${WHISPER_SRC} build-whisper EXCLUDE_FROM_ALL)
 
 # Build our JNI bridge
 add_library(${CMAKE_PROJECT_NAME} SHARED whisper_jni.c)
