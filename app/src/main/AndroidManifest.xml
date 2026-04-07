@@ -1,0 +1,65 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <uses-permission android:name="android.permission.INTERNET" />
+
+    <application
+        android:label="Pocket Agent"
+        android:icon="@android:drawable/ic_dialog_info"
+        android:theme="@style/Theme.PocketAgent"
+        android:supportsRtl="true">
+
+        <activity
+            android:name=".AssistantActivity"
+            android:exported="true"
+            android:launchMode="singleTask"
+            android:showOnLockScreen="true"
+            android:theme="@style/Theme.PocketAgent">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+            <intent-filter>
+                <action android:name="android.intent.action.ASSIST" />
+                <category android:name="android.intent.category.DEFAULT" />
+            </intent-filter>
+        </activity>
+
+        <service
+            android:name=".PocketVoiceService"
+            android:exported="true"
+            android:permission="android.permission.BIND_VOICE_INTERACTION">
+            <meta-data
+                android:name="android.voice_interaction"
+                android:resource="@xml/voice_interaction_service" />
+            <intent-filter>
+                <action android:name="android.service.voice.VoiceInteractionService" />
+            </intent-filter>
+        </service>
+
+        <service
+            android:name=".PocketSessionService"
+            android:exported="true"
+            android:permission="android.permission.BIND_VOICE_INTERACTION" />
+
+        <service
+            android:name=".PocketRecognitionService"
+            android:exported="true"
+            android:permission="android.permission.BIND_SPEECH_RECOGNITION_SERVICE">
+            <intent-filter>
+                <action android:name="android.speech.RecognitionService" />
+            </intent-filter>
+        </service>
+
+        <service
+            android:name=".service.InferenceService"
+            android:foregroundServiceType="specialUse"
+            android:exported="false" />
+
+    </application>
+</manifest>
