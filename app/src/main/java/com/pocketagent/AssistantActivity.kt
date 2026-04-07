@@ -79,6 +79,14 @@ class AssistantActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
+        // Request all-files access if not granted (needed to read models from shared storage)
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.R &&
+            !android.os.Environment.isExternalStorageManager()) {
+            val intent = android.content.Intent(android.provider.Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION)
+            intent.data = android.net.Uri.parse("package:$packageName")
+            startActivity(intent)
+        }
+
         modelManager = ModelManager(this)
         _modelsReady.value = modelManager.allModelsReady()
 
