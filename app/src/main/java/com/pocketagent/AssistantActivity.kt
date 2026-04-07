@@ -8,6 +8,7 @@ import android.content.ServiceConnection
 import android.content.pm.PackageManager
 import android.os.Bundle
 import android.os.IBinder
+import android.util.Log
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
@@ -29,12 +30,15 @@ import androidx.core.content.ContextCompat
 import androidx.lifecycle.lifecycleScope
 import com.pocketagent.service.InferenceService
 import com.pocketagent.service.ModelManager
+import com.pocketagent.service.Models
 import com.pocketagent.service.PipelineResult
 import com.pocketagent.ui.DownloadScreen
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
+
+private const val TAG = "PocketAgent"
 
 class AssistantActivity : ComponentActivity() {
 
@@ -50,26 +54,33 @@ class AssistantActivity : ComponentActivity() {
 
     private val connection = object : ServiceConnection {
         override fun onServiceConnected(name: ComponentName?, binder: IBinder?) {
+            Log.i(TAG, "Service connected")
             service = (binder as InferenceService.LocalBinder).getService()
             bound = true
 
             if (service?.llm?.isLoaded == true) {
-                // Already loaded — start listening immediately
+                Log.i(TAG, "Models already loaded, start listening")
                 requestMicAndStart()
             } else {
-                // Load models, show progress, then start listening
-                _state.value = AssistantState.Thinking // show "loading" state
+                Log.i(TAG, "Loading models...")
+                _state.value = AssistantState.Thinking
+                _transcript.value = "Loading models..."
                 lifecycleScope.launch(Dispatchers.IO) {
-                    val modelsDir = modelManager.getModelFile(
-                        com.pocketagent.service.Models.LLM
-                    ).parentFile ?: filesDir
+                    val modelsDir = modelManager.getModelFile(Models.LLM).parentFile ?: filesDir
+                    Log.i(TAG, "Models dir: ${modelsDir.absolutePath}")
                     service?.loadModels(modelsDir, applicationInfo.nativeLibraryDir) { status ->
+                        Log.i(TAG, "Load status: $status")
                         _transcript.value = status
                     }
-                    // Models loaded — now start listening
                     withContext(Dispatchers.Main) {
-                        _transcript.value = ""
-                        requestMicAndStart()
+                        if (service?.llm?.isLoaded == true) {
+                            Log.i(TAG, "Models loaded, start listening")
+                            _transcript.value = ""
+                            requestMicAndStart()
+                        } else {
+                            Log.e(TAG, "Models failed to load")
+                            _state.value = AssistantState.Error("Models failed to load")
+                        }
                     }
                 }
             }
@@ -90,16 +101,16 @@ class AssistantActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
-        // Request all-files access if not granted (needed to read models from shared storage)
-        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.R &&
-            !android.os.Environment.isExternalStorageManager()) {
-            val intent = android.content.Intent(android.provider.Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION)
-            intent.data = android.net.Uri.parse("package:$packageName")
-            startActivity(intent)
-        }
-
         modelManager = ModelManager(this)
-        _modelsReady.value = modelManager.allModelsReady()
+        val hasModels = modelManager.allModelsReady()
+        _modelsReady.value = hasModels
+        Log.i(TAG, "onCreate: models ready = $hasModels")
+
+        // Log model paths for debugging
+        for (model in Models.ALL) {
+            val f = modelManager.getModelFile(model)
+            Log.i(TAG, "Model ${model.name}: ${f.absolutePath} exists=${f.exists()} size=${f.length()}")
+        }
 
         setContent {
             if (_modelsReady.value) {
@@ -114,6 +125,7 @@ class AssistantActivity : ComponentActivity() {
                 DownloadScreen(
                     modelManager = modelManager,
                     onAllReady = {
+                        Log.i(TAG, "Downloads complete")
                         _modelsReady.value = true
                         startServiceAndListen()
                     }
@@ -121,21 +133,21 @@ class AssistantActivity : ComponentActivity() {
             }
         }
 
-        if (_modelsReady.value) {
+        if (hasModels) {
             startServiceAndListen()
         }
-    }
-
-    private fun startServiceAndListen() {
-        val serviceIntent = Intent(this, InferenceService::class.java)
-        startForegroundService(serviceIntent)
-        bindService(serviceIntent, connection, Context.BIND_AUTO_CREATE)
-        // Don't start listening yet — wait for models to load in onServiceConnected
     }
 
     override fun onDestroy() {
         if (bound) unbindService(connection)
         super.onDestroy()
+    }
+
+    private fun startServiceAndListen() {
+        Log.i(TAG, "Starting inference service")
+        val serviceIntent = Intent(this, InferenceService::class.java)
+        startForegroundService(serviceIntent)
+        bindService(serviceIntent, connection, Context.BIND_AUTO_CREATE)
     }
 
     private fun requestMicAndStart() {
@@ -150,7 +162,6 @@ class AssistantActivity : ComponentActivity() {
     private fun startPipeline() {
         lifecycleScope.launch {
             try {
-                // Record
                 _state.value = AssistantState.Listening
                 _transcript.value = ""
                 _response.value = ""
@@ -159,14 +170,12 @@ class AssistantActivity : ComponentActivity() {
                     recorder.recordToWav(File(cacheDir, "input.wav"))
                 }
 
-                // Check service
                 val svc = service
                 if (svc == null || !svc.llm.isLoaded) {
-                    _state.value = AssistantState.Error("Models not loaded yet")
+                    _state.value = AssistantState.Error("Models not loaded")
                     return@launch
                 }
 
-                // Transcribe
                 _state.value = AssistantState.Transcribing
                 val result = withContext(Dispatchers.IO) {
                     svc.voicePipeline(audioFile)
@@ -177,7 +186,6 @@ class AssistantActivity : ComponentActivity() {
                         _transcript.value = result.transcript
                         _response.value = result.response
                         _state.value = AssistantState.Speaking
-                        // Wait for TTS to finish
                         withContext(Dispatchers.IO) {
                             while (svc.tts.isSpeaking()) Thread.sleep(100)
                         }
@@ -191,6 +199,7 @@ class AssistantActivity : ComponentActivity() {
                     }
                 }
             } catch (e: Exception) {
+                Log.e(TAG, "Pipeline error", e)
                 _state.value = AssistantState.Error(e.message ?: "Unknown error")
             }
         }
@@ -219,7 +228,7 @@ fun AssistantScreen(
         AssistantState.Idle -> "Tap to speak"
         AssistantState.Listening -> "Listening..."
         AssistantState.Transcribing -> "Processing..."
-        AssistantState.Thinking -> "Thinking..."
+        AssistantState.Thinking -> "Loading..."
         AssistantState.Speaking -> "Speaking..."
         AssistantState.Done -> "Done"
         is AssistantState.Error -> state.message
@@ -272,7 +281,7 @@ fun AssistantScreen(
 
             if (transcript.isNotBlank()) {
                 Spacer(Modifier.height(24.dp))
-                Text("You: $transcript", color = Color(0xAAFFFFFF), fontSize = 16.sp,
+                Text("$transcript", color = Color(0xAAFFFFFF), fontSize = 16.sp,
                     textAlign = TextAlign.Center, modifier = Modifier.fillMaxWidth())
             }
             if (response.isNotBlank()) {
