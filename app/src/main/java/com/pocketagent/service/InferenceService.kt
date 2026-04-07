@@ -52,39 +52,61 @@ class InferenceService : Service() {
 
     fun loadModels(modelsDir: File, nativeLibDir: String, onProgress: (String) -> Unit) {
         val mm = ModelManager(this)
+        FileLogger.init(this)
 
-        onProgress("Initializing LLM backend...")
-        llm.init(nativeLibDir)
+        try {
+            FileLogger.log("loadModels: nativeLibDir=$nativeLibDir")
+            FileLogger.log("loadModels: modelsDir=${modelsDir.absolutePath}")
+            onProgress("Initializing LLM backend...")
 
-        val llmModel = mm.getModelFile(Models.LLM)
-        onProgress("Looking for LLM at: ${llmModel.absolutePath}")
-        if (llmModel.exists()) {
-            onProgress("Loading LLM (this takes ~30s)...")
-            if (llm.load(llmModel.absolutePath)) {
-                llm.setSystemPrompt(
-                    "You are Pocket Agent, a voice assistant on a phone. " +
-                    "Do not use internal reasoning. Answer directly. " +
-                    "Keep responses to 1-3 spoken sentences. " +
-                    "No markdown, no bullet points, no special formatting."
-                )
-                onProgress("LLM ready")
+            FileLogger.log("Calling llm.init()...")
+            llm.init(nativeLibDir)
+            FileLogger.log("llm.init() done")
+
+            val llmModel = mm.getModelFile(Models.LLM)
+            FileLogger.log("LLM model: ${llmModel.absolutePath} exists=${llmModel.exists()} size=${llmModel.length()}")
+
+            if (llmModel.exists()) {
+                onProgress("Loading LLM (this takes ~30s)...")
+                FileLogger.log("Calling llm.load()...")
+                if (llm.load(llmModel.absolutePath)) {
+                    FileLogger.log("llm.load() SUCCESS")
+                    llm.setSystemPrompt(
+                        "You are Pocket Agent, a voice assistant on a phone. " +
+                        "Do not use internal reasoning. Answer directly. " +
+                        "Keep responses to 1-3 spoken sentences. " +
+                        "No markdown, no bullet points, no special formatting."
+                    )
+                    FileLogger.log("System prompt set")
+                    onProgress("LLM ready")
+                } else {
+                    FileLogger.error("llm.load() returned false")
+                    onProgress("LLM failed to load")
+                }
             } else {
-                onProgress("LLM failed to load")
+                FileLogger.error("LLM model not found at ${llmModel.absolutePath}")
+                onProgress("LLM model not found")
             }
-        } else {
-            onProgress("LLM model not found")
-        }
 
-        val sttModel = mm.getModelFile(Models.STT)
-        if (sttModel.exists()) {
-            onProgress("Loading Whisper STT...")
-            stt.load(sttModel.absolutePath)
-            onProgress("STT ready")
-        } else {
-            onProgress("STT model not found")
-        }
+            val sttModel = mm.getModelFile(Models.STT)
+            FileLogger.log("STT model: ${sttModel.absolutePath} exists=${sttModel.exists()} size=${sttModel.length()}")
+            if (sttModel.exists()) {
+                onProgress("Loading Whisper STT...")
+                FileLogger.log("Calling stt.load()...")
+                stt.load(sttModel.absolutePath)
+                FileLogger.log("stt.load() done, isLoaded=${stt.isLoaded}")
+                onProgress("STT ready")
+            } else {
+                FileLogger.error("STT model not found at ${sttModel.absolutePath}")
+                onProgress("STT model not found")
+            }
 
-        updateNotification("Models loaded — ready")
+            updateNotification("Models loaded — ready")
+            FileLogger.log("loadModels complete. llm.isLoaded=${llm.isLoaded} stt.isLoaded=${stt.isLoaded}")
+        } catch (e: Exception) {
+            FileLogger.error("loadModels EXCEPTION", e)
+            onProgress("Error: ${e.message}")
+        }
     }
 
     fun voicePipeline(audioFile: File): PipelineResult {
