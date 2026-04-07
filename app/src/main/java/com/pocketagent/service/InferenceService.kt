@@ -51,10 +51,13 @@ class InferenceService : Service() {
     }
 
     fun loadModels(modelsDir: File, nativeLibDir: String, onProgress: (String) -> Unit) {
+        val mm = ModelManager(this)
+
         onProgress("Initializing LLM backend...")
         llm.init(nativeLibDir)
 
-        val llmModel = File(modelsDir, "google_gemma-4-E4B-it-Q5_K_M.gguf")
+        val llmModel = mm.getModelFile(Models.LLM)
+        onProgress("Looking for LLM at: ${llmModel.absolutePath}")
         if (llmModel.exists()) {
             onProgress("Loading LLM (this takes ~30s)...")
             if (llm.load(llmModel.absolutePath)) {
@@ -68,13 +71,17 @@ class InferenceService : Service() {
             } else {
                 onProgress("LLM failed to load")
             }
+        } else {
+            onProgress("LLM model not found")
         }
 
-        val sttModel = File(modelsDir, "ggml-small.bin")
+        val sttModel = mm.getModelFile(Models.STT)
         if (sttModel.exists()) {
             onProgress("Loading Whisper STT...")
             stt.load(sttModel.absolutePath)
             onProgress("STT ready")
+        } else {
+            onProgress("STT model not found")
         }
 
         updateNotification("Models loaded — ready")

@@ -52,13 +52,24 @@ class AssistantActivity : ComponentActivity() {
         override fun onServiceConnected(name: ComponentName?, binder: IBinder?) {
             service = (binder as InferenceService.LocalBinder).getService()
             bound = true
-            // Load models if not already loaded
-            if (service?.llm?.isLoaded != true) {
+
+            if (service?.llm?.isLoaded == true) {
+                // Already loaded — start listening immediately
+                requestMicAndStart()
+            } else {
+                // Load models, show progress, then start listening
+                _state.value = AssistantState.Thinking // show "loading" state
                 lifecycleScope.launch(Dispatchers.IO) {
-                    val modelsDir = getExternalFilesDir(null)?.let { File(it, "models") }
-                        ?: filesDir
+                    val modelsDir = modelManager.getModelFile(
+                        com.pocketagent.service.Models.LLM
+                    ).parentFile ?: filesDir
                     service?.loadModels(modelsDir, applicationInfo.nativeLibraryDir) { status ->
-                        // Could update UI with loading progress
+                        _transcript.value = status
+                    }
+                    // Models loaded — now start listening
+                    withContext(Dispatchers.Main) {
+                        _transcript.value = ""
+                        requestMicAndStart()
                     }
                 }
             }
@@ -119,7 +130,7 @@ class AssistantActivity : ComponentActivity() {
         val serviceIntent = Intent(this, InferenceService::class.java)
         startForegroundService(serviceIntent)
         bindService(serviceIntent, connection, Context.BIND_AUTO_CREATE)
-        requestMicAndStart()
+        // Don't start listening yet — wait for models to load in onServiceConnected
     }
 
     override fun onDestroy() {
