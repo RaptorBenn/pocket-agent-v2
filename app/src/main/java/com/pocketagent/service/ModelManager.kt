@@ -42,11 +42,32 @@ class ModelManager(private val context: Context) {
             return dir
         }
 
-    fun getModelFile(model: ModelInfo): File = File(modelsDir, model.filename)
+    /** Search paths for models — app dir first, then shared storage fallbacks */
+    private val searchPaths: List<File>
+        get() = listOf(
+            modelsDir,
+            File("/storage/emulated/0/PocketAgent"),
+            File("/storage/emulated/0/Download"),
+            File("/sdcard/PocketAgent"),
+            File("/sdcard/Download"),
+        )
+
+    fun getModelFile(model: ModelInfo): File {
+        // Check all search paths for existing model
+        for (dir in searchPaths) {
+            val file = File(dir, model.filename)
+            if (file.exists() && file.length() > 1000) return file
+        }
+        // Default to app's own dir for downloads
+        return File(modelsDir, model.filename)
+    }
 
     fun isDownloaded(model: ModelInfo): Boolean {
-        val file = getModelFile(model)
-        return file.exists() && file.length() > 1000
+        for (dir in searchPaths) {
+            val file = File(dir, model.filename)
+            if (file.exists() && file.length() > 1000) return true
+        }
+        return false
     }
 
     fun allModelsReady(): Boolean = Models.ALL.all { isDownloaded(it) }
