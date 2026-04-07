@@ -17,16 +17,22 @@ data class ModelInfo(
 )
 
 object Models {
+    // Local Termux file server (run: cd ~/projects/models && python3 -m http.server 9090)
+    private const val LOCAL = "http://127.0.0.1:9090"
+    // Remote fallback
+    private const val HF_BARTOWSKI = "https://huggingface.co/bartowski/google_gemma-4-E4B-it-GGUF/resolve/main"
+    private const val HF_WHISPER = "https://huggingface.co/ggerganov/whisper.cpp/resolve/main"
+
     val LLM = ModelInfo(
         name = "Gemma 4 E4B Q5_K_M",
         filename = "google_gemma-4-E4B-it-Q5_K_M.gguf",
-        url = "https://huggingface.co/bartowski/google_gemma-4-E4B-it-GGUF/resolve/main/google_gemma-4-E4B-it-Q5_K_M.gguf",
+        url = "$LOCAL/google_gemma-4-E4B-it-Q5_K_M.gguf",
         sizeBytes = 5_820_000_000L,
     )
     val STT = ModelInfo(
         name = "Whisper Small",
         filename = "ggml-small.bin",
-        url = "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-small.bin",
+        url = "$LOCAL/ggml-small.bin",
         sizeBytes = 488_000_000L,
     )
 
@@ -42,32 +48,11 @@ class ModelManager(private val context: Context) {
             return dir
         }
 
-    /** Search paths for models — app dir first, then shared storage fallbacks */
-    private val searchPaths: List<File>
-        get() = listOf(
-            modelsDir,
-            File("/storage/emulated/0/PocketAgent"),
-            File("/storage/emulated/0/Download"),
-            File("/sdcard/PocketAgent"),
-            File("/sdcard/Download"),
-        )
-
-    fun getModelFile(model: ModelInfo): File {
-        // Check all search paths for existing model
-        for (dir in searchPaths) {
-            val file = File(dir, model.filename)
-            if (file.exists() && file.length() > 1000) return file
-        }
-        // Default to app's own dir for downloads
-        return File(modelsDir, model.filename)
-    }
+    fun getModelFile(model: ModelInfo): File = File(modelsDir, model.filename)
 
     fun isDownloaded(model: ModelInfo): Boolean {
-        for (dir in searchPaths) {
-            val file = File(dir, model.filename)
-            if (file.exists() && file.length() > 1000) return true
-        }
-        return false
+        val file = getModelFile(model)
+        return file.exists() && file.length() > 1000
     }
 
     fun allModelsReady(): Boolean = Models.ALL.all { isDownloaded(it) }
