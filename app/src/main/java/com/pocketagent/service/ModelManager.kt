@@ -1,13 +1,13 @@
 package com.pocketagent.service
 
-import android.app.DownloadManager
-import android.content.BroadcastReceiver
 import android.content.Context
-import android.content.Intent
-import android.content.IntentFilter
-import android.net.Uri
-import android.os.Build
+import android.util.Log
 import java.io.File
+import java.io.FileOutputStream
+import java.net.HttpURLConnection
+import java.net.URL
+
+private const val TAG = "PocketAgent"
 
 data class ModelInfo(
     val name: String,
@@ -17,11 +17,8 @@ data class ModelInfo(
 )
 
 object Models {
-    // Local Termux file server (run: cd ~/projects/models && python3 -m http.server 9090)
+    // Local Termux file server: cd ~/projects/models && python3 -m http.server 9090
     private const val LOCAL = "http://127.0.0.1:9090"
-    // Remote fallback
-    private const val HF_BARTOWSKI = "https://huggingface.co/bartowski/google_gemma-4-E4B-it-GGUF/resolve/main"
-    private const val HF_WHISPER = "https://huggingface.co/ggerganov/whisper.cpp/resolve/main"
 
     val LLM = ModelInfo(
         name = "Gemma 4 E4B Q5_K_M",
@@ -41,7 +38,7 @@ object Models {
 
 class ModelManager(private val context: Context) {
 
-    private val modelsDir: File
+    val modelsDir: File
         get() {
             val dir = File(context.getExternalFilesDir(null), "models")
             dir.mkdirs()
@@ -52,38 +49,61 @@ class ModelManager(private val context: Context) {
 
     fun isDownloaded(model: ModelInfo): Boolean {
         val file = getModelFile(model)
-        return file.exists() && file.length() > 1000
+        val exists = file.exists() && file.length() > 1000
+        Log.i(TAG, "isDownloaded(${model.filename}): path=${file.absolutePath} exists=${file.exists()} size=${file.length()} result=$exists")
+        return exists
     }
 
     fun allModelsReady(): Boolean = Models.ALL.all { isDownloaded(it) }
 
-    fun startDownload(model: ModelInfo): Long {
-        val dm = context.getSystemService(Context.DOWNLOAD_SERVICE) as DownloadManager
-        val request = DownloadManager.Request(Uri.parse(model.url))
-            .setTitle("Pocket Agent: ${model.name}")
-            .setDescription("Downloading ${model.filename}")
-            .setDestinationUri(Uri.fromFile(getModelFile(model)))
-            .setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED)
-            .setAllowedOverMetered(true)
-            .setAllowedOverRoaming(false)
-        return dm.enqueue(request)
-    }
+    /**
+     * Download a model file directly using HttpURLConnection.
+     * This runs in the app's own process so it respects our cleartext network config.
+     * Returns true on success.
+     */
+    fun downloadModel(model: ModelInfo, onProgress: (Long, Long) -> Unit): Boolean {
+        val outFile = getModelFile(model)
+        Log.i(TAG, "Downloading ${model.name} from ${model.url} to ${outFile.absolutePath}")
 
-    fun getDownloadProgress(downloadId: Long): Pair<Long, Long> {
-        val dm = context.getSystemService(Context.DOWNLOAD_SERVICE) as DownloadManager
-        val query = DownloadManager.Query().setFilterById(downloadId)
-        val cursor = dm.query(query)
-        if (cursor.moveToFirst()) {
-            val downloaded = cursor.getLong(
-                cursor.getColumnIndexOrThrow(DownloadManager.COLUMN_BYTES_DOWNLOADED_SO_FAR)
-            )
-            val total = cursor.getLong(
-                cursor.getColumnIndexOrThrow(DownloadManager.COLUMN_TOTAL_SIZE_BYTES)
-            )
-            cursor.close()
-            return downloaded to total
+        try {
+            val url = URL(model.url)
+            val conn = url.openConnection() as HttpURLConnection
+            conn.connectTimeout = 10_000
+            conn.readTimeout = 60_000
+            conn.requestMethod = "GET"
+
+            val responseCode = conn.responseCode
+            if (responseCode != 200) {
+                Log.e(TAG, "Download failed: HTTP $responseCode for ${model.url}")
+                return false
+            }
+
+            val totalBytes = conn.contentLengthLong
+            Log.i(TAG, "Download started: $totalBytes bytes")
+
+            val input = conn.inputStream
+            val output = FileOutputStream(outFile)
+            val buffer = ByteArray(8192)
+            var downloadedBytes = 0L
+
+            while (true) {
+                val bytesRead = input.read(buffer)
+                if (bytesRead == -1) break
+                output.write(buffer, 0, bytesRead)
+                downloadedBytes += bytesRead
+                onProgress(downloadedBytes, totalBytes)
+            }
+
+            output.close()
+            input.close()
+            conn.disconnect()
+
+            Log.i(TAG, "Download complete: ${outFile.absolutePath} (${outFile.length()} bytes)")
+            return outFile.length() > 1000
+        } catch (e: Exception) {
+            Log.e(TAG, "Download failed for ${model.name}", e)
+            outFile.delete()
+            return false
         }
-        cursor.close()
-        return 0L to 0L
     }
 }

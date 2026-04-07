@@ -13,33 +13,24 @@ import androidx.compose.ui.unit.sp
 import com.pocketagent.service.ModelInfo
 import com.pocketagent.service.ModelManager
 import com.pocketagent.service.Models
-import kotlinx.coroutines.delay
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 @Composable
 fun DownloadScreen(
     modelManager: ModelManager,
     onAllReady: () -> Unit,
 ) {
-    var downloadIds by remember { mutableStateOf(mapOf<String, Long>()) }
     var progress by remember { mutableStateOf(mapOf<String, Float>()) }
-    var started by remember { mutableStateOf(false) }
+    var status by remember { mutableStateOf("") }
+    var downloading by remember { mutableStateOf(false) }
+    var error by remember { mutableStateOf("") }
+    val scope = rememberCoroutineScope()
 
-    // Poll download progress
-    LaunchedEffect(downloadIds) {
-        while (downloadIds.isNotEmpty()) {
-            delay(1000)
-            val newProgress = mutableMapOf<String, Float>()
-            for ((filename, id) in downloadIds) {
-                val (downloaded, total) = modelManager.getDownloadProgress(id)
-                newProgress[filename] = if (total > 0) downloaded.toFloat() / total else 0f
-            }
-            progress = newProgress
-
-            if (modelManager.allModelsReady()) {
-                onAllReady()
-                return@LaunchedEffect
-            }
-        }
+    // Check if already ready
+    LaunchedEffect(Unit) {
+        if (modelManager.allModelsReady()) onAllReady()
     }
 
     Box(
@@ -52,45 +43,62 @@ fun DownloadScreen(
             horizontalAlignment = Alignment.CenterHorizontally,
             modifier = Modifier.padding(32.dp)
         ) {
-            Text(
-                "Pocket Agent",
-                color = Color.White,
-                fontSize = 28.sp
-            )
+            Text("Pocket Agent", color = Color.White, fontSize = 28.sp)
             Spacer(Modifier.height(8.dp))
-            Text(
-                "First-time setup",
-                color = Color(0xAAFFFFFF),
-                fontSize = 16.sp
-            )
+            Text("First-time setup", color = Color(0xAAFFFFFF), fontSize = 16.sp)
             Spacer(Modifier.height(48.dp))
 
-            // Show each model
             Models.ALL.forEach { model ->
                 ModelRow(
                     model = model,
                     isDownloaded = modelManager.isDownloaded(model),
                     progress = progress[model.filename] ?: 0f,
-                    isDownloading = downloadIds.containsKey(model.filename)
+                    isDownloading = downloading && !modelManager.isDownloaded(model)
                 )
                 Spacer(Modifier.height(16.dp))
             }
 
-            Spacer(Modifier.height(32.dp))
+            Spacer(Modifier.height(16.dp))
 
-            if (!started) {
+            if (status.isNotBlank()) {
+                Text(status, color = Color(0xAAFFFFFF), fontSize = 14.sp,
+                    textAlign = TextAlign.Center)
+                Spacer(Modifier.height(16.dp))
+            }
+
+            if (error.isNotBlank()) {
+                Text(error, color = Color(0xFFE53935), fontSize = 14.sp,
+                    textAlign = TextAlign.Center)
+                Spacer(Modifier.height(16.dp))
+            }
+
+            if (!downloading) {
                 Button(
                     onClick = {
-                        started = true
-                        val ids = mutableMapOf<String, Long>()
-                        for (model in Models.ALL) {
-                            if (!modelManager.isDownloaded(model)) {
-                                ids[model.filename] = modelManager.startDownload(model)
+                        downloading = true
+                        error = ""
+                        scope.launch {
+                            for (model in Models.ALL) {
+                                if (modelManager.isDownloaded(model)) continue
+                                status = "Downloading ${model.name}..."
+                                val success = withContext(Dispatchers.IO) {
+                                    modelManager.downloadModel(model) { downloaded, total ->
+                                        if (total > 0) {
+                                            progress = progress + (model.filename to (downloaded.toFloat() / total))
+                                        }
+                                    }
+                                }
+                                if (!success) {
+                                    error = "Failed to download ${model.name}. Make sure Termux file server is running:\ncd ~/projects/models && python3 -m http.server 9090"
+                                    downloading = false
+                                    return@launch
+                                }
+                                progress = progress + (model.filename to 1f)
                             }
+                            status = "All models downloaded!"
+                            downloading = false
+                            if (modelManager.allModelsReady()) onAllReady()
                         }
-                        downloadIds = ids
-                        // If all already downloaded
-                        if (modelManager.allModelsReady()) onAllReady()
                     },
                     colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF1E88E5))
                 ) {
@@ -99,19 +107,11 @@ fun DownloadScreen(
 
                 Spacer(Modifier.height(16.dp))
                 Text(
-                    "Total: ~6.3 GB\nRequires Wi-Fi recommended",
-                    color = Color(0x88FFFFFF),
-                    fontSize = 14.sp,
-                    textAlign = TextAlign.Center
+                    "Total: ~6.3 GB\nModels download from Termux localhost",
+                    color = Color(0x88FFFFFF), fontSize = 14.sp, textAlign = TextAlign.Center
                 )
-            } else if (!modelManager.allModelsReady()) {
+            } else {
                 CircularProgressIndicator(color = Color(0xFF1E88E5))
-                Spacer(Modifier.height(16.dp))
-                Text(
-                    "Downloading... check notification for progress",
-                    color = Color(0xAAFFFFFF),
-                    fontSize = 14.sp
-                )
             }
         }
     }
@@ -129,12 +129,7 @@ private fun ModelRow(
             verticalAlignment = Alignment.CenterVertically,
             modifier = Modifier.fillMaxWidth()
         ) {
-            Text(
-                model.name,
-                color = Color.White,
-                fontSize = 16.sp,
-                modifier = Modifier.weight(1f)
-            )
+            Text(model.name, color = Color.White, fontSize = 16.sp, modifier = Modifier.weight(1f))
             Text(
                 when {
                     isDownloaded -> "Ready"
